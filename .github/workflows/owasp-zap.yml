@@ -1,0 +1,4 @@
+- name: OWASP ZAP Full Scan
+  uses: zaproxy/action-full-scan@v0.4.0
+      with:
+      target: 'https://dev.events.beeem.com/'
