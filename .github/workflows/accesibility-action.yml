@@ -1,0 +1,23 @@
+name: Tests
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+jobs:
+  run-container:
+    name: End to End
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: A11yWatch website scan
+        uses: ./
+        with:
+          WEBSITE_URL: https://dev.events.beeem.com/
+          FAIL_TOTAL_COUNT: 10000
+          EXTERNAL: false
+          SITE_WIDE: true
+          SUBDOMAINS: true
+          TLD: true
+          LIST: true
+          UPGRADE: true
