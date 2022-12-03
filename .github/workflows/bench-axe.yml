@@ -1,9 +1,10 @@
 name: Bench Axe
 
 on:
+  push:
+    branches: [ main, master ]
   pull_request:
-    branches-ignore:
-      - main, master
+    branches: [ main, master ]
 jobs:
   axe:
     runs-on: ubuntu-latest
