@@ -1,0 +1,266 @@
+name: Web Accessibility Evaluation
+on:
+  push:
+    branches: [$default-branch]
+  pull_request:
+    branches: [$default-branch]
+author: A11yWatch
+branding:
+  icon: "shield"
+  color: "gray-dark"
+description: Powerful web accessibility testing.
+inputs:
+  WEBSITE_URL:
+    description: Website domain to scan
+    required: true
+  FIX:
+    description: Attempt to apply recommendations to code.
+    required: false
+    default: false
+  EXTERNAL:
+    description: Use the A11yWatch external API.
+    required: false
+    default: false
+  SITE_WIDE:
+    description: Perform a site-wide scan.
+    required: false
+    default: false
+  SUBDOMAINS:
+    description: Include all subdomains.
+    required: false
+    default: false
+  TLD:
+    description: Include all TLD extensions.
+    required: false
+    default: false
+  FAIL_TOTAL_COUNT:
+    description: Use to fail the CI if the amount of issues of type errors and warnings is greater than the count.
+    required: false
+    default: 0
+  FAIL_ERRORS_COUNT:
+    description: Use to fail the CI if the amount of issues of type errors is greater than the count.
+    required: false
+    default: 0
+  FAIL_WARNINGS_COUNT:
+    description: Use to fail the CI if the amount of issues of type warnings is greater than the count.
+    required: false
+    default: 0
+  DISABLE_PR_STATS:
+    description: Disable the bot from posting on your PR.
+    required: false
+    default: false
+  TOKEN:
+    description: The github token to use for posting comments.
+    required: false
+    default: ""
+  LIST:
+    description: Report the output to github as a pass or fail list.
+    required: false
+    default: false
+  A11YWATCH_TOKEN:
+    description: The A11yWatch token to authenticate to the API.
+    required: false
+    default: ""
+  COMPUTER_VISION_ENDPOINT:
+    description: The Computer Vision endpoint to use for advanced AI.
+    required: false
+    default: ""
+  COMPUTER_VISION_SUBSCRIPTION_KEY:
+    description: The Computer Vision subscription key to use for advanced AI.
+    required: false
+    default: ""
+  SLIM:
+    description: Add slim gRPC client usage to gather issue stats.
+    required: false
+    default: false
+  UPGRADE:
+    description: Upgrade the CLI and docker images to latest across runs.
+    required: false
+    default: false
+outputs:
+  issues:
+    description: "The amount of issues found on the page"
+    value: ${{ steps.a11ywatch-results-generator.outputs.issues }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v3.0.2
+      if: ${{ inputs.FIX == 'true' }}
+      with:
+        repository: ${{ github.event.pull_request.head.repo.full_name }}
+        ref: ${{ github.event.pull_request.head.ref }}
+        clean: false
+
+    - name: Cache cargo crates
+      uses: actions/cache@v3
+      id: cache-cargo
+      env:
+        cache-name: cache-cargo-crates
+      with:
+        path: |
+          ~/.cargo/
+        key: ~/.cargo/bin/a11ywatch
+
+    - name: Install Rust, Cargo-Update, Protobuf Compiler, and A11yWatch CLI
+      if: steps.cache-cargo.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl https://sh.rustup.rs -sSf | sh -s -- -y
+        sudo apt update && sudo apt upgrade -y
+        sudo apt install -y protobuf-compiler libprotobuf-dev
+        cargo install cargo-update
+        cargo install a11ywatch_cli ${{ inputs.SLIM == 'true' && '--features grpc' || '' }}
+
+    - name: Check for A11yWatch CLI Updates
+      shell: bash
+      run: cargo install-update -i a11ywatch_cli
+
+    - name: Configure CLI creds
+      if: ${{ inputs.A11YWATCH_TOKEN }}
+      shell: bash
+      run: a11ywatch --set-token ${{ inputs.A11YWATCH_TOKEN }}
+
+    - name: Configure Computer Vision API KEY
+      if: ${{ inputs.COMPUTER_VISION_SUBSCRIPTION_KEY }}
+      shell: bash
+      run: a11ywatch --set-cv-token ${{ inputs.COMPUTER_VISION_SUBSCRIPTION_KEY }}
+
+    - name: Configure Computer Vision URL
+      if: ${{ inputs.COMPUTER_VISION_ENDPOINT }}
+      shell: bash
+      run: a11ywatch --set-cv-url ${{ inputs.COMPUTER_VISION_ENDPOINT }}
+
+    - name: Build A11yWatch Service
+      if: ${{ inputs.EXTERNAL == 'false' }}
+      shell: bash
+      run: a11ywatch build --standalone ${{ inputs.UPGRADE == 'true' && '--upgrade' || '' }}
+
+    - name: Start A11yWatch Service
+      if: ${{ inputs.EXTERNAL == 'false' }}
+      shell: bash
+      run: a11ywatch start --standalone
+
+    - name: Wait for Healthy Container
+      if: ${{ inputs.EXTERNAL == 'false' }}
+      shell: bash
+      run: |
+        attempt=0
+        while [ $attempt -le 30 ]; do
+            attempt=$(( $attempt + 1 ))
+            echo "Waiting for server to be up (attempt: $attempt)..."
+            result=$(docker logs a11ywatch)
+            if grep "^chrome launched and connected" <<< $result; then
+              echo "A11yWatch ready!"
+               sleep 4.5
+              break
+            fi
+            sleep 0.3
+        done
+
+    - name: A11yWatch Scan [Local]
+      if: ${{ inputs.EXTERNAL == 'false' && inputs.SITE_WIDE == 'false' }}
+      shell: bash
+      run: a11ywatch scan --url ${{ inputs.WEBSITE_URL }} --save ${{ inputs.FIX == 'true' && '--fix' || '' }}
+
+    - name: A11yWatch Scan [External]
+      if: ${{ inputs.EXTERNAL == 'true' && inputs.SITE_WIDE == 'false' }}
+      shell: bash
+      run: a11ywatch scan --url ${{ inputs.WEBSITE_URL }} --external --save ${{ inputs.FIX == 'true' && '--fix' || '' }}
+
+    - name: A11yWatch Crawl [Local]
+      if: ${{ inputs.EXTERNAL == 'false' && inputs.SITE_WIDE == 'true' }}
+      shell: bash
+      run: a11ywatch crawl --url ${{ inputs.WEBSITE_URL }} ${{ inputs.SUBDOMAINS == 'true' && '--subdomains' || '' }} ${{ inputs.TLD == 'true' && '--tld' || ''}} --save ${{ inputs.FIX == 'true' && '--fix' || '' }}
+
+    - name: A11yWatch Crawl [External]
+      if: ${{ inputs.EXTERNAL == 'true' && inputs.SITE_WIDE == 'true' }}
+      shell: bash
+      run: a11ywatch crawl --url ${{ inputs.WEBSITE_URL }} ${{ inputs.SUBDOMAINS == 'true' && '--subdomains' || '' }} ${{ inputs.TLD == 'true' && '--tld' || ''}} --external --save ${{ inputs.FIX == 'true' && '--fix' || '' }}
+
+    - name: Scan Results Check
+      id: a11ywatch-results-generator
+      shell: bash
+      run: |
+        # get results path
+        results_path="$(a11ywatch --find-results)"
+
+        website_issues_total=$(a11ywatch --results-issues)
+        website_issues_errors=$(a11ywatch --results-issues-errors)
+        website_issues_warnings=$(a11ywatch --results-issues-warnings)
+
+        total_limit=${{ inputs.FAIL_TOTAL_COUNT }}
+        errors_limit=${{ inputs.FAIL_ERRORS_COUNT }}
+        warnings_limit=${{ inputs.FAIL_WARNINGS_COUNT }}
+
+        total_count=${total_limit:-0}
+        errors_count=${errors_limit:-0}
+        warnings_count=${warnings_limit:-0}
+
+        if [ "$total_count" -gt 0 ]; then
+          if [ $website_issues_total -gt "$total_count" ]; then
+              echo "Failed accessibility test. $website_issues_total total errors and warnings exceeded limit!"
+              exit 1
+          fi
+        fi
+
+        if [ "$errors_count" -gt 0 ]; then
+          if [ $website_issues_errors -gt "$errors_count" ]; then
+              echo "Failed accessibility test. $website_issues_errors errors exceeded the limit!"
+              exit 1
+          fi
+        fi
+
+        if [ "$warnings_count" -gt 0 ]; then
+          if [ $website_issues_warnings -gt "$warnings_count" ]; then
+              echo "Failed accessibility test. $website_issues_warnings warnings exceeded limit!"
+              exit 1
+          fi
+        fi
+
+        echo "::set-output name=issues::$(echo ${website_issues_total})"
+
+    - name: Post Stats to GitHub PR
+      shell: bash
+      if: ${{ github.event_name == 'pull_request' && inputs.DISABLE_PR_STATS == 'false' }}
+      run: |
+        # post github
+        GH_TOKEN="${{ inputs.TOKEN || github.token }}"
+
+        results_path="$(a11ywatch --find-results)"
+        gh_api_url="$(a11ywatch --github-api-url)"
+        website_issues=$(a11ywatch --results-issues)
+
+        # send pr results if issues exist
+        if [ "$website_issues" -gt 0 ]; then
+          # check for open pr
+          pr_response=$(curl --location --request GET "$gh_api_url" \
+              -H "Authorization: token $GH_TOKEN")
+
+          if [ $(echo $pr_response | jq length) -eq 0 ]; then
+            echo "No PR found to update"
+          else          
+            pr_comment_url=$(echo $pr_response | jq -r ".[]._links.comments.href")
+
+            # extract the results to a file
+            body="$( a11ywatch --github-results-path extract --platform github ${{ inputs.LIST == 'true' && '-l' || ''}} )"
+            
+            # get results of the file path 
+            gh_file="@$(a11ywatch --github-results-path)"
+
+            # post comment to github
+            curl -X POST -d "$gh_file" "$pr_comment_url" \
+              -H "Authorization: token $GH_TOKEN" \
+              -H 'Content-Type: application/json'
+          fi
+        fi
+
+    - uses: EndBug/add-and-commit@v9
+      if: ${{ inputs.FIX == 'true' }}
+      with:
+        message: "fix(accessibility): add recommendations from scan"
+        committer_name: GitHub Actions
+
+    - name: Stop A11yWatch Service
+      if: ${{ !inputs.EXTERNAL }}
+      shell: bash
+      run: a11ywatch stop
