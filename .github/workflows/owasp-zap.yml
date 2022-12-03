@@ -1,4 +1,4 @@
-name: CI
+name: OWASP ZAP CI
 on:
   push:
     branches: [ main, master ]
